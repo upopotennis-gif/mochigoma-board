@@ -218,7 +218,15 @@ function totals(plan){
 
 /* ---------- 状態 ---------- */
 const S={plans:new Map(),cur:null,tab:'assign',tool:'main',mode:'loading',readonly:false,undo:[],confirmDel:false,renaming:false,cmpBase:null,panel:null,panelErr:''};
-let db=null; const dirty=new Set(), writing=new Set(), timers=new Map();
+let db=null, remote=null, fbOn=false; const dirty=new Set(), writing=new Set(), timers=new Map(), failed=new Set(), deleted=new Set();
+const FBCONF={
+  apiKey:'AIzaSyCzxuZbLIhAKYIWGI5Q7vMscumtzwdxF0U',
+  authDomain:'kissa-register.firebaseapp.com',
+  projectId:'kissa-register',
+  storageBucket:'kissa-register.firebasestorage.app',
+  messagingSenderId:'39499958848',
+  appId:'1:39499958848:web:1a8ba8004dc4611c1cada5'
+};
 const LS='mochigoma-board-v1';
 const esc=s=>String(s??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 const $=s=>document.querySelector(s);
@@ -235,7 +243,8 @@ function body(p){ const b=clone(p); delete b.id; return b; }
 function saveLocal(){ try{ localStorage.setItem(LS,JSON.stringify(sortedPlans())); }catch(e){} }
 function save(p){
   p.updatedAt=Date.now();
-  if(S.mode!=='shared'){ saveLocal(); syncLabel(); return; }
+  if(S.mode!=='shared'||fbOn) saveLocal();
+  if(S.mode!=='shared'){ syncLabel(); return; }
   dirty.add(p.id); syncLabel();
   clearTimeout(timers.get(p.id)); timers.set(p.id,setTimeout(()=>flush(p.id),700));
 }
@@ -243,26 +252,28 @@ async function flush(id){
   if(writing.has(id)) return;           // 書き込み中なら終わってからもう一度
   const p=S.plans.get(id); if(!p){ dirty.delete(id); return; }
   writing.add(id); dirty.delete(id);
-  try{ await db.doc('plans/'+id).set(body(p)); }
+  failed.delete(id);
+  try{ await remote.set(id,body(p)); }
   catch(e){
     if(e&&e.code==='invalid_argument'){ S.readonly=true; showBanner('この画面は見るだけの設定です。変更は保存されません。'); }
     else if(e&&e.code==='quota_exceeded'){ showBanner('保存できる量の上限に達しました。使わない案を削除してください。'); }
-    else { dirty.add(id); showBanner('保存に失敗しました。通信を確認してください。もう一度変更すると再保存します。'); }
+    else { dirty.add(id); failed.add(id); showBanner('保存に失敗しました。通信を確認してください。もう一度変更すると再保存します。'); }
   }
   writing.delete(id);
-  if(dirty.has(id)&&!S.readonly){ clearTimeout(timers.get(id)); timers.set(id,setTimeout(()=>flush(id),400)); }
+  if(dirty.has(id)&&!failed.has(id)&&!S.readonly){ clearTimeout(timers.get(id)); timers.set(id,setTimeout(()=>flush(id),400)); }
   syncLabel();
 }
 async function removePlan(id){
   S.plans.delete(id); dirty.delete(id);
-  if(S.mode==='shared'){ try{ await db.doc('plans/'+id).delete(); }catch(e){ showBanner('削除を保存できませんでした。'); } } else saveLocal();
+  if(S.mode==='shared'){ deleted.add(id); try{ await remote.del(id); }catch(e){ deleted.delete(id); showBanner('削除を保存できませんでした。'); } }
+  if(S.mode!=='shared'||fbOn) saveLocal();
 }
 function showBanner(msg){ const b=$('#banner'); b.textContent=msg; b.hidden=!msg; }
 function syncLabel(){
   const el=$('#sync');
   if(S.mode==='loading') el.textContent='読み込み中…';
-  else if(S.mode==='shared') el.innerHTML=(dirty.size||writing.size)?'保存中…':'<b>共有中</b>・変更はこのページを開いた全員に反映されます';
-  else el.innerHTML=window.claude?'<b>この端末だけに保存</b>（共有の保存先につながっていません）':'<b>この端末に保存</b>・ほかの人には「書き出す／読み込む」で渡します';
+  else if(S.mode==='shared') el.innerHTML=(dirty.size||writing.size)?'保存中…':fbOn?'<b>合言葉で同期中</b>・変更は合言葉を知っている全員に反映されます':'<b>共有中</b>・変更はこのページを開いた全員に反映されます';
+  else el.innerHTML=window.claude?'<b>この端末だけに保存</b>（共有の保存先につながっていません）':'<b>この端末だけに保存</b>・合言葉でつなぐと、みんなの案と同期します';
 }
 
 /* ---------- 変更の入口 ---------- */
@@ -293,6 +304,48 @@ async function decryptSeed(pw){
   const k=await crypto.subtle.deriveKey({name:'PBKDF2',salt:b64d(E.salt),iterations:E.iter,hash:'SHA-256'},km,{name:'AES-GCM',length:256},false,['decrypt']);
   const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:b64d(E.iv)},k,b64d(E.ct)); return JSON.parse(new TextDecoder().decode(pt));
 }
+/* ---------- 合言葉での同期（GitHub版。中身は端末で暗号にしてから送る） ---------- */
+const canSync=()=>!window.claude&&hasEnc()&&!!(window.crypto&&crypto.subtle);
+function getSync(){ try{ const v=JSON.parse(localStorage.getItem(LS+'-sync')||'null'); return v&&v.room&&v.key?v:null; }catch(e){ return null; } }
+async function deriveSync(pw){
+  const km=await crypto.subtle.importKey('raw',new TextEncoder().encode(pw),'PBKDF2',false,['deriveBits']);
+  const bits=new Uint8Array(await crypto.subtle.deriveBits({name:'PBKDF2',salt:new TextEncoder().encode('mochigoma-board/sync/v1'),iterations:200000,hash:'SHA-256'},km,512));
+  return {room:[...bits.slice(0,12)].map(x=>x.toString(16).padStart(2,'0')).join(''),key:b64e(bits.slice(32,64))};
+}
+let fbUnsub=null;
+async function fbConnect(sync){
+  const [app,auth,fs]=await Promise.all([
+    import('https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js'),
+    import('https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js'),
+    import('https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js')]);
+  const a=app.getApps().length?app.getApps()[0]:app.initializeApp(FBCONF);
+  await auth.signInAnonymously(auth.getAuth(a));
+  const fdb=fs.getFirestore(a), ref=fs.doc(fdb,'events','mg-'+sync.room,'state','board');
+  const k=await crypto.subtle.importKey('raw',b64d(sync.key),'AES-GCM',false,['encrypt','decrypt']);
+  const seen={};
+  remote={
+    set:async(id,b)=>{ const iv=crypto.getRandomValues(new Uint8Array(12)); const ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv},k,new TextEncoder().encode(JSON.stringify(b))));
+      const v={c:b64e(ct),iv:b64e(iv),at:Date.now()}; seen[id]=v.iv;
+      try{ await fs.updateDoc(ref,new fs.FieldPath('plans',id),v); }catch(e){ if(e&&e.code==='not-found') await fs.setDoc(ref,{plans:{[id]:v}},{merge:true}); else throw e; } },
+    del:id=>fs.updateDoc(ref,new fs.FieldPath('plans',id),fs.deleteField())
+  };
+  await new Promise((resolve,reject)=>{ let first=true;
+    fbUnsub=fs.onSnapshot(ref,async snap=>{
+      const rp=(snap.exists()&&snap.data().plans)||{};
+      for(const id of Object.keys(rp)){ const v=rp[id]; if(!v||deleted.has(id)) continue; if(seen[id]===v.iv&&S.plans.has(id)) continue; if(dirty.has(id)||writing.has(id)){ continue; }
+        try{ const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:b64d(v.iv)},k,b64d(v.c)); const q=parseImport(new TextDecoder().decode(pt)); const o=JSON.parse(new TextDecoder().decode(pt)); q.id=id; q.order=+o.order||0; q.updatedAt=+o.updatedAt||0; S.plans.set(id,normalize(q)); seen[id]=v.iv; }catch(e){} }
+      for(const id of [...deleted]) if(!rp[id]) deleted.delete(id);
+      for(const id of [...S.plans.keys()]){ if(rp[id]||dirty.has(id)||writing.has(id)) continue; if(seen[id]){ S.plans.delete(id); delete seen[id]; } else if(!S.readonly){ save(S.plans.get(id)); } }
+      fbOn=true; S.mode='shared'; saveLocal(); pickCur();
+      render.fromRemote=true; render(); render.fromRemote=false;
+      if(first){ first=false; resolve(); }
+    },err=>{ fbOn=false; S.mode='local'; showBanner('同期の保存先につながらなくなりました。いまはこの端末だけに保存しています。'); syncLabel(); if(first){ first=false; reject(err); } });
+  });
+}
+async function startSync(sync){
+  try{ fbOn=true; S.mode='shared'; await fbConnect(sync); showBanner(''); }
+  catch(e){ fbOn=false; S.mode='local'; showBanner('同期の保存先につながりません。いまはこの端末だけに保存しています。通信を確かめて、ページを開き直してください。'); render(); }
+}
 function exportCode(p){ return 'MOCHI1:'+b64e(new TextEncoder().encode(JSON.stringify(body(p)))); }
 function parseImport(text){
   text=String(text||'').trim(); if(!text) throw new Error('empty');
@@ -314,7 +367,7 @@ function addPlan(p,id){
 function renderPanel(p){
   if(!S.panel) return '';
   const err=S.panelErr?`<div class="err">${esc(S.panelErr)}</div>`:'';
-  if(S.panel==='unlock') return `<div class="panel"><div><b>合言葉で現行データを開く</b></div><div class="note">先生の名前が入ったデータは暗号にして載せてあります。合言葉を入れると、この端末に読み込みます。</div>
+  if(S.panel==='unlock') return `<div class="panel"><div><b>${canSync()?'合言葉でみんなの案とつなぐ':'合言葉で現行データを開く'}</b></div><div class="note">${canSync()?'合言葉を入れると、現行データと、同じ合言葉でつないだ人の案がこの端末に出ます。ここで作った案や変更も全員に届きます。中身は暗号にして送ります。':'先生の名前が入ったデータは暗号にして載せてあります。合言葉を入れると、この端末に読み込みます。'}</div>
     <div class="row"><input type="password" id="unlock-input" autocomplete="off" aria-label="合言葉"><button class="primary" data-act="unlock-ok">開く</button><button data-act="panel-close">閉じる</button></div>${err}</div>`;
   if(S.panel==='export'&&p) return `<div class="panel"><div><b>「${esc(p.name)}」を書き出す</b></div><div class="note">下の文字列を校内チャットなどで送ると、相手は「読み込む」で同じ案を開けます。先生の名前が入っているので、送り先に気をつけてください。</div>
     <textarea id="export-box" readonly aria-label="書き出した文字列"></textarea>
@@ -339,7 +392,7 @@ function renderPlanbar(){
     else if(S.confirmDel) html+=`<span class="row"><span class="note">「${esc(p.name)}」を削除しますか？</span><button class="danger" data-act="del-ok">削除する</button><button data-act="del-no">やめる</button></span>`;
     else html+=`<span class="row"><button data-act="dup">この案を複製</button><button data-act="dup-empty">割り当てを空にして複製</button><button class="ghost" data-act="rename">名前を変える</button><button class="ghost" data-act="del">削除</button></span>`;
   }
-  if(!S.readonly) html+=`<span class="row">${p?'<button data-act="export">書き出す</button>':''}<button data-act="import">読み込む</button>${hasEnc()&&!seedLoaded()?'<button data-act="unlock">合言葉で現行データを開く</button>':''}</span>`;
+  if(!S.readonly) html+=`<span class="row">${p?'<button data-act="export">書き出す</button>':''}<button data-act="import">読み込む</button>${canSync()?(fbOn?'<button class="ghost" data-act="sync-off">同期を切る</button>':'<button data-act="unlock">合言葉でみんなの案とつなぐ</button>'):(hasEnc()&&!seedLoaded()?'<button data-act="unlock">合言葉で現行データを開く</button>':'')}</span>`;
   html+=renderPanel(p);
   el.innerHTML=html;
   if(S.panel==='export'&&p){ const b=$('#export-box'); if(b) b.value=exportCode(p); }
@@ -451,7 +504,7 @@ function render(){
   const v=$('#view'); const p=cur();
   document.querySelectorAll('#tabs button').forEach(b=>b.setAttribute('aria-selected',b.dataset.tab===S.tab));
   if(S.mode==='loading'){ v.innerHTML='<div class="empty" style="margin-top:14px">案を読み込んでいます…</div>'; return; }
-  if(!p){ v.innerHTML=`<div class="empty" style="margin-top:14px"><div><b>まだ案がありません。</b></div><div class="note">授業の一覧（学年・組・科目・単位数）が入ったひな形から始められます。先生は「先生・授業の設定」で追加します。</div>${S.readonly?'':`<div class="row" style="justify-content:center">${hasEnc()?'<button class="primary" data-act="unlock">合言葉で現行データを開く</button>':''}<button class="${hasEnc()?'':'primary'}" data-act="first">ひな形から最初の案を作る</button></div>`}</div>`; return; }
+  if(!p){ v.innerHTML=`<div class="empty" style="margin-top:14px"><div><b>まだ案がありません。</b></div><div class="note">授業の一覧（学年・組・科目・単位数）が入ったひな形から始められます。先生は「先生・授業の設定」で追加します。</div>${S.readonly?'':`<div class="row" style="justify-content:center">${hasEnc()?`<button class="primary" data-act="unlock">${canSync()?'合言葉でみんなの案とつなぐ':'合言葉で現行データを開く'}</button>`:''}<button class="${hasEnc()?'':'primary'}" data-act="first">ひな形から最初の案を作る</button></div>`}</div>`; return; }
   const sx=v.querySelector('.scroller')?.scrollLeft||0;
   v.innerHTML=S.tab==='assign'?renderAssign(p):S.tab==='compare'?renderCompare():renderSetup(p);
   const sc=v.querySelector('.scroller'); if(sc&&S.tab==='assign') sc.scrollLeft=sx;
@@ -520,8 +573,11 @@ document.addEventListener('click',e=>{
     case 'import-ok': { try{ const np=parseImport($('#import-box').value); addPlan(np); S.panel=null; S.panelErr=''; render(); toast('「'+np.name+'」を読み込みました'); }
       catch(err){ S.panelErr='読み込めませんでした。文字列が途中で切れていないか確かめてください。'; const keep=$('#import-box').value; render(); const b2=$('#import-box'); if(b2) b2.value=keep; } break; }
     case 'unlock-ok': { const pw=($('#unlock-input').value||'').trim(); if(!pw) break; b.disabled=true; b.textContent='開いています…';
-      decryptSeed(pw).then(d=>{ let n=0; for(const sp of (d.plans||[])){ if(!sp||!sp.id||S.plans.has(sp.id)) continue; const q=parseImport(JSON.stringify(sp)); addPlan(q,sp.id); n++; } S.panel=null; S.panelErr=''; render(); toast(n?'現行データを読み込みました':'現行データはすでに入っています'); },
+      decryptSeed(pw).then(async d=>{ for(const sp of (d.plans||[])){ if(!sp||!sp.id||S.plans.has(sp.id)) continue; const q=parseImport(JSON.stringify(sp)); addPlan(q,sp.id); } S.panel=null; S.panelErr='';
+          if(canSync()){ const sync=await deriveSync(pw); try{ localStorage.setItem(LS+'-sync',JSON.stringify(sync)); }catch(e){} render(); toast('つないでいます…'); await startSync(sync); if(fbOn) toast('みんなの案とつながりました'); }
+          else { render(); toast('現行データを読み込みました'); } },
         ()=>{ S.panelErr='合言葉が違うようです。もう一度入れてください。'; render(); }); break; }
+    case 'sync-off': { try{ localStorage.removeItem(LS+'-sync'); }catch(e){} if(fbUnsub) fbUnsub(); fbUnsub=null; fbOn=false; remote=null; S.mode='local'; saveLocal(); render(); toast('同期を切りました。案はこの端末に残っています'); break; }
     case 'copy': { const text=tsv(p); const done=()=>toast('表をコピーしました。スプレッドシートに貼り付けられます');
       const fallback=()=>{ const a=$('#copyarea'); a.innerHTML='<div class="note">コピーできなかったので、下を選んでコピーしてください。</div><textarea class="copybox" id="copybox" readonly></textarea>'; const tx=$('#copybox'); tx.value=text; tx.focus(); tx.select(); };
       try{ navigator.clipboard.writeText(text).then(done,fallback); }catch(err){ fallback(); } break; }
@@ -563,8 +619,8 @@ function startLocal(){
 async function start(){
   render();
   let got=null; try{ got=window.claude&&window.claude.use?await window.claude.use('db'):null; }catch(e){ got=null; }
-  if(!got){ startLocal(); return; }
-  db=got;
+  if(!got){ startLocal(); const sync=canSync()&&getSync(); if(sync) startSync(sync); return; }
+  db=got; remote={set:(id,b)=>db.doc('plans/'+id).set(b),del:id=>db.doc('plans/'+id).delete()};
   try{ const user=await window.claude.use('user'); const can=user?await user.can('data.write'):null; if(can===false){ S.readonly=true; showBanner('この画面は見るだけの設定です。割り当てを変えるには、共有の設定で「投稿者」以上にしてもらってください。'); } }catch(e){}
   let first=true;
   const slow=setTimeout(()=>{ if(first){ showBanner('共有の保存先にまだ届きません。つながり次第、表示します。'); } },10000);
