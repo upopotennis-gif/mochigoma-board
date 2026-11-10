@@ -174,7 +174,7 @@ const TEMPLATE_ROWS = [
 ];
 function templateClasses(){
   const cs = TEMPLATE_ROWS.map(r=>({id:r[0],dept:r[1],grade:r[2],room:r[3],subj:r[4],units:r[5],split:r[6],need:r[7],kind:'class'}));
-  cs.push({id:'lhr',dept:'他',grade:'',room:'',subj:'LHR・総合',units:0,split:1,need:0,kind:'other'});
+  cs.push({id:'lhr',dept:'他',grade:'',room:'',subj:'LHR・総合',units:0,split:1,need:0,kind:'other',inCap:true});
   cs.push({id:'shonin',dept:'他',grade:'',room:'',subj:'初任研',units:0,split:1,need:0,kind:'other'});
   return cs;
 }
@@ -185,7 +185,7 @@ function cellOf(plan,t,c){ const v=plan.cells[key(t,c)]; return v?{m:v.m||0,t:v.
 function teacherStat(plan,t){
   let cls=0,oth=0,mainN=0; const subj=new Set();
   for(const c of plan.classes){ const v=cellOf(plan,t.id,c.id); const n=v.m+v.t; if(!n) continue;
-    if(c.kind==='other') oth+=n; else { cls+=n; if(v.m>0){ mainN++; subj.add(c.grade+' '+c.subj+' '+c.units); } } }
+    if(c.kind==='other'){ if(c.inCap) cls+=n; else oth+=n; } else { cls+=n; if(v.m>0){ mainN++; subj.add(c.grade+' '+c.subj+' '+c.units); } } }
   return {cls,oth,mainN,subjN:subj.size,over:Math.max(0,cls-(+t.cap||0))};
 }
 function classStat(plan,c){
@@ -198,7 +198,7 @@ function classLabel(c){ const g=c.grade==='中学'?'中学':(c.grade||'').replac
 function issuesOf(plan){
   const out=[];
   for(const t of plan.teachers){ const s=teacherStat(plan,t);
-    if(s.over>0) out.push({lv:'crit',tag:'上限超え',text:`${t.name}：授業 ${s.cls} コマ（上限 ${t.cap}）。${s.over} コマ多い`});
+    if(s.over>0) out.push({lv:'crit',tag:'上限超え',text:`${t.name}：持ち駒 ${s.cls} コマ（上限 ${t.cap}）。${s.over} コマ多い`});
     else if(s.cls+s.oth===0) out.push({lv:'info',tag:'未割当',text:`${t.name}：まだ1コマも入っていません`});
     if(s.subjN>=4) out.push({lv:'info',tag:'科目数',text:`${t.name}：メインの科目が ${s.subjN} 種類（考査の作成数）`});
   }
@@ -234,7 +234,7 @@ const uid=p=>p+Math.random().toString(36).slice(2,9);
 const clone=o=>JSON.parse(JSON.stringify(o));
 const cur=()=>S.plans.get(S.cur)||null;
 function sortedPlans(){ return [...S.plans.values()].sort((a,b)=>(a.order||0)-(b.order||0)||String(a.name).localeCompare(String(b.name),'ja')); }
-function normalize(p){ p.teachers=Array.isArray(p.teachers)?p.teachers:[]; p.classes=Array.isArray(p.classes)?p.classes:[]; p.cells=(p.cells&&typeof p.cells==='object')?p.cells:{}; p.name=String(p.name||'名前のない案'); return p; }
+function normalize(p){ p.teachers=Array.isArray(p.teachers)?p.teachers:[]; p.classes=Array.isArray(p.classes)?p.classes:[]; p.cells=(p.cells&&typeof p.cells==='object')?p.cells:{}; p.name=String(p.name||'名前のない案'); for(const c of p.classes) if(c&&c.kind==='other'&&c.inCap===undefined) c.inCap=(c.id==='lhr'); return p; }
 function toast(msg){ const t=$('#toast'); t.textContent=msg; t.hidden=false; clearTimeout(toast.h); toast.h=setTimeout(()=>t.hidden=true,2200); }
 function remember(){ try{ localStorage.setItem(LS+'-cur',S.cur||''); }catch(e){} }
 
@@ -354,7 +354,7 @@ function parseImport(text){
   const str=v=>String(v??'').slice(0,60), n=v=>Math.max(0,Math.min(99,Math.round(+v||0)));
   const p={name:str(obj.name)||'受け取った案',teachers:[],classes:[],cells:{}};
   for(const t of obj.teachers.slice(0,60)) if(t&&t.id) p.teachers.push({id:str(t.id),name:str(t.name),kind:str(t.kind),cap:n(t.cap),memo:str(t.memo)});
-  for(const c of obj.classes.slice(0,120)) if(c&&c.id) p.classes.push({id:str(c.id),dept:str(c.dept),grade:str(c.grade),room:str(c.room),subj:str(c.subj),units:n(c.units),split:Math.max(1,n(c.split)),need:n(c.need),kind:c.kind==='other'?'other':'class'});
+  for(const c of obj.classes.slice(0,120)) if(c&&c.id) p.classes.push({id:str(c.id),dept:str(c.dept),grade:str(c.grade),room:str(c.room),subj:str(c.subj),units:n(c.units),split:Math.max(1,n(c.split)),need:n(c.need),kind:c.kind==='other'?'other':'class',...(c.kind==='other'&&typeof c.inCap==='boolean'?{inCap:c.inCap}:{})});
   const cells=(obj.cells&&typeof obj.cells==='object')?obj.cells:{};
   for(const t of p.teachers) for(const c of p.classes){ const v=cells[key(t.id,c.id)]; if(v&&(n(v.m)||n(v.t))) p.cells[key(t.id,c.id)]={m:n(v.m),t:n(v.t)}; }
   return p;
@@ -403,7 +403,7 @@ function renderPlanbar(){
 function renderAssign(p){
   const cs=p.classes, ts=p.teachers; const T=totals(p); const iss=issuesOf(p);
   // 帯(学科・学年)見出し
-  let band='<tr class="band"><th class="lead" rowspan="2">先生<br>授業コマ／上限</th>';
+  let band='<tr class="band"><th class="lead" rowspan="2">先生<br>持ち駒／上限</th>';
   for(let i=0;i<cs.length;){ let j=i; const lab=bandLabel(cs[i]); while(j<cs.length&&bandLabel(cs[j])===lab) j++; band+=`<th colspan="${j-i}" class="${groupClass(cs[i])}">${esc(lab)}</th>`; i=j; }
   band+='</tr>';
   let head='<tr>'+cs.map(c=>`<th class="${groupClass(c)}" title="${esc(classLabel(c))}"><div class="vh">${esc(c.subj)}</div><div class="room">${esc(c.kind==='other'?'—':((c.grade==='中学'?'中':(c.grade||'').replace('年',''))+(c.room||'')))}</div></th>`).join('')+'</tr>';
@@ -439,7 +439,7 @@ function renderAssign(p){
   </div>
   <div class="sum" style="margin-bottom:10px">
     <span>必要 <b>${T.need}</b> コマ</span><span>割り当て済み <b>${T.done}</b> コマ</span><span>残り <b>${Math.max(0,T.need-T.done)}</b> コマ</span>
-    <span>上限の合計 <b>${T.cap}</b> コマ</span><span>その他（LHRなど） <b>${T.other}</b></span>
+    <span>上限の合計 <b>${T.cap}</b> コマ</span><span>持ち駒に数えないもの <b>${T.other}</b></span>
     <span>要対応 <b style="color:var(--crit)">${crit}</b>・注意 <b style="color:var(--warn)">${warn}</b></span>
   </div>
   <div class="main">
@@ -458,7 +458,7 @@ function renderCompare(){
   const names=[]; for(const p of ps) for(const t of p.teachers) if(!names.includes(t.name)) names.push(t.name);
   const statBy=(p,name)=>{ const t=p.teachers.find(x=>x.name===name); return t?{t,s:teacherStat(p,t)}:null; };
   let h=`<div class="row" style="margin:14px 0 10px"><label for="cmp-base">基準にする案</label><select id="cmp-base">${ps.map(p=>`<option value="${esc(p.id)}" ${p.id===base.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select><span class="note">基準と違うところに色がつきます。</span></div>`;
-  h+='<div class="card"><h2>先生ごとの持ち駒数（授業コマ／上限）</h2><div class="scroller" style="border:0"><table class="tbl"><thead><tr><th>先生</th>'+ps.map(p=>`<th class="num">${esc(p.name)}</th>`).join('')+'</tr></thead><tbody>';
+  h+='<div class="card"><h2>先生ごとの持ち駒数（持ち駒／上限）</h2><div class="scroller" style="border:0"><table class="tbl"><thead><tr><th>先生</th>'+ps.map(p=>`<th class="num">${esc(p.name)}</th>`).join('')+'</tr></thead><tbody>';
   for(const n of names){ const b=statBy(base,n); h+=`<tr><td>${esc(n)}</td>`+ps.map(p=>{ const x=statBy(p,n); if(!x) return '<td class="num note">—</td>';
       const d=b?x.s.cls-b.s.cls:0; return `<td class="num" ${x.s.over>0?'style="color:var(--crit);font-weight:700"':''}>${x.s.cls}／${esc(x.t.cap)}${x.s.oth?`<span class="note"> +他${x.s.oth}</span>`:''}${d?`<span class="delta">${d>0?'+':''}${d}</span>`:''}</td>`; }).join('')+'</tr>'; }
   h+='<tr><td><b>要対応・注意</b></td>'+ps.map(p=>{ const i=issuesOf(p); return `<td class="num">${i.filter(x=>x.lv==='crit').length}・${i.filter(x=>x.lv==='warn').length}</td>`; }).join('')+'</tr>';
@@ -475,14 +475,14 @@ function renderCompare(){
 function renderSetup(p){
   const ro=S.readonly?'disabled':'';
   let h='<div class="note" style="margin:14px 0 10px">ここでの変更は、いま開いている案「'+esc(p.name)+'」だけに入ります。来年度の人の入れ替わりやクラス数の変更はここで直します。</div>';
-  h+='<div class="card"><h2>先生</h2><div class="scroller" style="border:0"><table class="tbl"><thead><tr><th>名前</th><th>区分</th><th>授業コマの上限</th><th>メモ（担任・分掌など）</th><th></th></tr></thead><tbody>';
+  h+='<div class="card"><h2>先生</h2><div class="scroller" style="border:0"><table class="tbl"><thead><tr><th>名前</th><th>区分</th><th>持ち駒の上限</th><th>メモ（担任・分掌など）</th><th></th></tr></thead><tbody>';
   p.teachers.forEach((t,i)=>{ h+=`<tr><td><input ${ro} class="w-name" type="text" id="t-name-${esc(t.id)}" data-tf="name" data-i="${i}" value="${esc(t.name)}" aria-label="名前"></td>`+
     `<td><select ${ro} id="t-kind-${esc(t.id)}" data-tf="kind" data-i="${i}" aria-label="区分">${['正規','臨任','非常勤'].map(k=>`<option ${t.kind===k?'selected':''}>${k}</option>`).join('')}</select></td>`+
     `<td><input ${ro} type="number" min="0" max="40" id="t-cap-${esc(t.id)}" data-tf="cap" data-i="${i}" value="${esc(t.cap)}" aria-label="上限"></td>`+
     `<td><input ${ro} type="text" id="t-memo-${esc(t.id)}" data-tf="memo" data-i="${i}" value="${esc(t.memo||'')}" aria-label="メモ"></td>`+
     `<td style="white-space:nowrap"><button ${ro} class="ghost" data-act="t-up" data-i="${i}" aria-label="上へ">↑</button><button ${ro} class="ghost" data-act="t-down" data-i="${i}" aria-label="下へ">↓</button><button ${ro} class="ghost" data-act="t-del" data-i="${i}">外す</button></td></tr>`; });
   h+=`</tbody></table></div><div><button ${ro} data-act="t-add">先生を追加</button></div></div>`;
-  h+='<div class="card" style="margin-top:16px"><h2>授業</h2><div class="note">「必要コマ」はTTを含めた週あたりの合計、「展開」は同じ時間に分けて行う講座の数です。「その他」は授業コマの上限に数えません。</div><div class="scroller" style="border:0"><table class="tbl"><thead><tr><th>学科</th><th>学年</th><th>組</th><th>科目</th><th>単位</th><th>展開</th><th>必要コマ</th><th>種類</th><th></th></tr></thead><tbody>';
+  h+='<div class="card" style="margin-top:16px"><h2>授業</h2><div class="note">「必要コマ」はTTを含めた週あたりの合計、「展開」は同じ時間に分けて行う講座の数です。「その他（持ち駒に数える）」は LHR・総合のように先生の持ち駒数と上限に入れるもの、「その他（数えない）」は入れないものです。</div><div class="scroller" style="border:0"><table class="tbl"><thead><tr><th>学科</th><th>学年</th><th>組</th><th>科目</th><th>単位</th><th>展開</th><th>必要コマ</th><th>種類</th><th></th></tr></thead><tbody>';
   p.classes.forEach((c,i)=>{ h+=`<tr><td><select ${ro} id="c-dept-${esc(c.id)}" data-cf="dept" data-i="${i}" aria-label="学科">${['専門','普通','中学','他'].map(k=>`<option ${c.dept===k?'selected':''}>${k}</option>`).join('')}</select></td>`+
     `<td><select ${ro} id="c-grade-${esc(c.id)}" data-cf="grade" data-i="${i}" aria-label="学年">${['','1年','2年','3年','中学'].map(k=>`<option ${c.grade===k?'selected':''}>${k}</option>`).join('')}</select></td>`+
     `<td><input ${ro} class="w-s" type="text" id="c-room-${esc(c.id)}" data-cf="room" data-i="${i}" value="${esc(c.room)}" aria-label="組"></td>`+
@@ -490,7 +490,7 @@ function renderSetup(p){
     `<td><input ${ro} type="number" min="0" max="10" id="c-units-${esc(c.id)}" data-cf="units" data-i="${i}" value="${esc(c.units)}" aria-label="単位"></td>`+
     `<td><input ${ro} type="number" min="1" max="8" id="c-split-${esc(c.id)}" data-cf="split" data-i="${i}" value="${esc(c.split)}" aria-label="展開"></td>`+
     `<td><input ${ro} type="number" min="0" max="40" id="c-need-${esc(c.id)}" data-cf="need" data-i="${i}" value="${esc(c.need)}" aria-label="必要コマ"></td>`+
-    `<td><select ${ro} id="c-kind-${esc(c.id)}" data-cf="kind" data-i="${i}" aria-label="種類"><option value="class" ${c.kind!=='other'?'selected':''}>授業</option><option value="other" ${c.kind==='other'?'selected':''}>その他</option></select></td>`+
+    `<td><select ${ro} id="c-kind-${esc(c.id)}" data-cf="kind" data-i="${i}" aria-label="種類"><option value="class" ${c.kind!=='other'?'selected':''}>授業</option><option value="other-in" ${c.kind==='other'&&c.inCap?'selected':''}>その他（持ち駒に数える）</option><option value="other" ${c.kind==='other'&&!c.inCap?'selected':''}>その他（数えない）</option></select></td>`+
     `<td style="white-space:nowrap"><button ${ro} class="ghost" data-act="c-up" data-i="${i}" aria-label="左へ">←</button><button ${ro} class="ghost" data-act="c-down" data-i="${i}" aria-label="右へ">→</button><button ${ro} class="ghost" data-act="c-dup" data-i="${i}">複製</button><button ${ro} class="ghost" data-act="c-del" data-i="${i}">外す</button></td></tr>`; });
   h+=`</tbody></table></div><div><button ${ro} data-act="c-add">授業を追加</button></div></div>`;
   return h;
@@ -535,7 +535,7 @@ function clickCell(td){
   else if(S.tool==='tt') mutate(pl=>setCell(pl,tid,cid,v.m,v.t>=c.units?0:v.t+1));
 }
 function tsv(p){
-  const head=['先生','区分','授業コマ','上限','その他',...p.classes.map(classLabel)];
+  const head=['先生','区分','持ち駒','上限','数えないもの',...p.classes.map(classLabel)];
   const rows=p.teachers.map(t=>{ const s=teacherStat(p,t); return [t.name,t.kind,s.cls,t.cap,s.oth,...p.classes.map(c=>{ const v=cellOf(p,t.id,c.id); return (v.m?v.m:'')+(v.t?'T'+v.t:''); })]; });
   return [head,...rows].map(r=>r.join('\t')).join('\n');
 }
@@ -598,7 +598,7 @@ document.addEventListener('change',e=>{
   if(el.id==='import-file'){ const f=el.files&&el.files[0]; if(f){ const r=new FileReader(); r.onload=()=>{ const b=$('#import-box'); if(b) b.value=String(r.result||''); }; r.readAsText(f); } return; }
   const num=v=>Math.max(0,Math.round(+v||0));
   if(el.dataset.tf){ const f=el.dataset.tf,i=+el.dataset.i; mutate(pl=>{ pl.teachers[i][f]=f==='cap'?num(el.value):el.value.trim(); }); return; }
-  if(el.dataset.cf){ const f=el.dataset.cf,i=+el.dataset.i; mutate(pl=>{ const c=pl.classes[i]; c[f]=(f==='units'||f==='need')?num(el.value):f==='split'?Math.max(1,num(el.value)):el.value.trim(); }); return; }
+  if(el.dataset.cf){ const f=el.dataset.cf,i=+el.dataset.i; mutate(pl=>{ const c=pl.classes[i]; if(f==='kind'){ c.kind=el.value==='class'?'class':'other'; if(c.kind==='other') c.inCap=el.value==='other-in'; else delete c.inCap; } else c[f]=(f==='units'||f==='need')?num(el.value):f==='split'?Math.max(1,num(el.value)):el.value.trim(); }); return; }
 });
 document.addEventListener('keydown',e=>{
   if(e.key==='Escape'){ closePop(); if(S.renaming||S.confirmDel||S.panel){ S.renaming=false; S.confirmDel=false; S.panel=null; render(); } return; }
