@@ -175,7 +175,7 @@ const TEMPLATE_ROWS = [
 function templateClasses(){
   const cs = TEMPLATE_ROWS.map(r=>({id:r[0],dept:r[1],grade:r[2],room:r[3],subj:r[4],units:r[5],split:r[6],need:r[7],kind:'class'}));
   cs.push({id:'lhr',dept:'他',grade:'',room:'',subj:'LHR・総合',units:0,split:1,need:0,kind:'other',inCap:true});
-  cs.push({id:'shonin',dept:'他',grade:'',room:'',subj:'初任研',units:0,split:1,need:0,kind:'other'});
+  cs.push({id:'shonin',dept:'他',grade:'',room:'',subj:'初任研',units:0,split:1,need:0,kind:'other',inCap:true});
   return cs;
 }
 
@@ -234,7 +234,7 @@ const uid=p=>p+Math.random().toString(36).slice(2,9);
 const clone=o=>JSON.parse(JSON.stringify(o));
 const cur=()=>S.plans.get(S.cur)||null;
 function sortedPlans(){ return [...S.plans.values()].sort((a,b)=>(a.order||0)-(b.order||0)||String(a.name).localeCompare(String(b.name),'ja')); }
-function normalize(p){ p.teachers=Array.isArray(p.teachers)?p.teachers:[]; p.classes=Array.isArray(p.classes)?p.classes:[]; p.cells=(p.cells&&typeof p.cells==='object')?p.cells:{}; p.name=String(p.name||'名前のない案'); for(const c of p.classes) if(c&&c.kind==='other'&&c.inCap===undefined) c.inCap=(c.id==='lhr'); return p; }
+function normalize(p){ p.teachers=Array.isArray(p.teachers)?p.teachers:[]; p.classes=Array.isArray(p.classes)?p.classes:[]; p.cells=(p.cells&&typeof p.cells==='object')?p.cells:{}; p.name=String(p.name||'名前のない案'); for(const c of p.classes) if(c&&c.kind==='other'&&c.inCap===undefined) c.inCap=(c.id==='lhr'); if((+p.v||0)<2){ for(const c of p.classes) if(c&&c.kind==='other'&&c.id==='shonin') c.inCap=true; p.v=2; } return p; }
 function toast(msg){ const t=$('#toast'); t.textContent=msg; t.hidden=false; clearTimeout(toast.h); toast.h=setTimeout(()=>t.hidden=true,2200); }
 function remember(){ try{ localStorage.setItem(LS+'-cur',S.cur||''); }catch(e){} }
 
@@ -352,7 +352,7 @@ function parseImport(text){
   let obj; if(text.startsWith('MOCHI1:')) obj=JSON.parse(new TextDecoder().decode(b64d(text.slice(7).replace(/\s+/g,'')))); else obj=JSON.parse(text);
   if(!obj||typeof obj!=='object'||!Array.isArray(obj.teachers)||!Array.isArray(obj.classes)) throw new Error('shape');
   const str=v=>String(v??'').slice(0,60), n=v=>Math.max(0,Math.min(99,Math.round(+v||0)));
-  const p={name:str(obj.name)||'受け取った案',teachers:[],classes:[],cells:{}};
+  const p={name:str(obj.name)||'受け取った案',v:+obj.v||0,teachers:[],classes:[],cells:{}};
   for(const t of obj.teachers.slice(0,60)) if(t&&t.id) p.teachers.push({id:str(t.id),name:str(t.name),kind:str(t.kind),cap:n(t.cap),memo:str(t.memo)});
   for(const c of obj.classes.slice(0,120)) if(c&&c.id) p.classes.push({id:str(c.id),dept:str(c.dept),grade:str(c.grade),room:str(c.room),subj:str(c.subj),units:n(c.units),split:Math.max(1,n(c.split)),need:n(c.need),kind:c.kind==='other'?'other':'class',...(c.kind==='other'&&typeof c.inCap==='boolean'?{inCap:c.inCap}:{})});
   const cells=(obj.cells&&typeof obj.cells==='object')?obj.cells:{};
@@ -482,7 +482,7 @@ function renderSetup(p){
     `<td><input ${ro} type="text" id="t-memo-${esc(t.id)}" data-tf="memo" data-i="${i}" value="${esc(t.memo||'')}" aria-label="メモ"></td>`+
     `<td style="white-space:nowrap"><button ${ro} class="ghost" data-act="t-up" data-i="${i}" aria-label="上へ">↑</button><button ${ro} class="ghost" data-act="t-down" data-i="${i}" aria-label="下へ">↓</button><button ${ro} class="ghost" data-act="t-del" data-i="${i}">外す</button></td></tr>`; });
   h+=`</tbody></table></div><div><button ${ro} data-act="t-add">先生を追加</button></div></div>`;
-  h+='<div class="card" style="margin-top:16px"><h2>授業</h2><div class="note">「必要コマ」はTTを含めた週あたりの合計、「展開」は同じ時間に分けて行う講座の数です。「その他（持ち駒に数える）」は LHR・総合のように先生の持ち駒数と上限に入れるもの、「その他（数えない）」は入れないものです。</div><div class="scroller" style="border:0"><table class="tbl"><thead><tr><th>学科</th><th>学年</th><th>組</th><th>科目</th><th>単位</th><th>展開</th><th>必要コマ</th><th>種類</th><th></th></tr></thead><tbody>';
+  h+='<div class="card" style="margin-top:16px"><h2>授業</h2><div class="note">「必要コマ」はTTを含めた週あたりの合計、「展開」は同じ時間に分けて行う講座の数です。「その他（持ち駒に数える）」は LHR・総合や初任研のように先生の持ち駒数と上限に入れるもの、「その他（数えない）」は入れないものです。</div><div class="scroller" style="border:0"><table class="tbl"><thead><tr><th>学科</th><th>学年</th><th>組</th><th>科目</th><th>単位</th><th>展開</th><th>必要コマ</th><th>種類</th><th></th></tr></thead><tbody>';
   p.classes.forEach((c,i)=>{ h+=`<tr><td><select ${ro} id="c-dept-${esc(c.id)}" data-cf="dept" data-i="${i}" aria-label="学科">${['専門','普通','中学','他'].map(k=>`<option ${c.dept===k?'selected':''}>${k}</option>`).join('')}</select></td>`+
     `<td><select ${ro} id="c-grade-${esc(c.id)}" data-cf="grade" data-i="${i}" aria-label="学年">${['','1年','2年','3年','中学'].map(k=>`<option ${c.grade===k?'selected':''}>${k}</option>`).join('')}</select></td>`+
     `<td><input ${ro} class="w-s" type="text" id="c-room-${esc(c.id)}" data-cf="room" data-i="${i}" value="${esc(c.room)}" aria-label="組"></td>`+
