@@ -175,7 +175,6 @@ const TEMPLATE_ROWS = [
 function templateClasses(){
   const cs = TEMPLATE_ROWS.map(r=>({id:r[0],dept:r[1],grade:r[2],room:r[3],subj:r[4],units:r[5],split:r[6],need:r[7],kind:'class'}));
   cs.push({id:'lhr',dept:'他',grade:'',room:'',subj:'LHR・総合',units:0,split:1,need:0,kind:'other',inCap:true});
-  cs.push({id:'shonin',dept:'他',grade:'',room:'',subj:'初任研',units:0,split:1,need:0,kind:'other',inCap:true});
   return cs;
 }
 

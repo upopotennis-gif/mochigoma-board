@@ -1,4 +1,4 @@
-<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="robots" content="noindex,nofollow"><style>:root{color-scheme:light}body{margin:0;font:14px system-ui}img{max-width:100%}[hidden]{display:none!important}</style></head><body><script src="data.enc.js?v=202611191148"></script>
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="robots" content="noindex,nofollow"><style>:root{color-scheme:light}body{margin:0;font:14px system-ui}img{max-width:100%}[hidden]{display:none!important}</style></head><body><script src="data.enc.js?v=202611191532"></script>
 <title>持ち駒検討ボード</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=Roboto+Mono:wght@400;500;700&display=swap">
@@ -176,7 +176,6 @@ const TEMPLATE_ROWS = [
 function templateClasses(){
   const cs = TEMPLATE_ROWS.map(r=>({id:r[0],dept:r[1],grade:r[2],room:r[3],subj:r[4],units:r[5],split:r[6],need:r[7],kind:'class'}));
   cs.push({id:'lhr',dept:'他',grade:'',room:'',subj:'LHR・総合',units:0,split:1,need:0,kind:'other',inCap:true});
-  cs.push({id:'shonin',dept:'他',grade:'',room:'',subj:'初任研',units:0,split:1,need:0,kind:'other',inCap:true});
   return cs;
 }
 
