@@ -184,7 +184,7 @@ function cellOf(plan,t,c){ const v=plan.cells[key(t,c)]; return v?{m:v.m||0,t:v.
 function teacherStat(plan,t){
   let cls=0,oth=0,mainN=0; const subj=new Set();
   for(const c of plan.classes){ const v=cellOf(plan,t.id,c.id); const n=v.m+v.t; if(!n) continue;
-    if(c.kind==='other'){ if(c.inCap) cls+=n; else oth+=n; } else { cls+=n; if(v.m>0){ mainN++; subj.add(c.grade+' '+c.subj+' '+c.units); } } }
+    if(c.kind==='other'){ if(c.inCap) cls+=n; else oth+=n; } else { cls+=n; if(v.m>0){ mainN++; subj.add(c.dept+' '+c.grade+' '+c.subj+' '+c.units); } } }
   return {cls,oth,mainN,subjN:subj.size,over:Math.max(0,cls-(+t.cap||0))};
 }
 function classStat(plan,c){
@@ -409,7 +409,7 @@ function renderAssign(p){
   let rows='';
   ts.forEach((t,ri)=>{ const s=teacherStat(p,t); const pct=t.cap>0?Math.min(100,Math.round(s.cls/t.cap*100)):0;
     rows+=`<tr><th class="lead ${s.over>0?'over':''}" scope="row"><div class="tname"><span>${esc(t.name)}</span><span class="kind">${esc(t.kind||'')}</span></div>`+
-      `<div class="load"><span><b>${s.cls}</b>／${esc(t.cap)}${s.oth?` ＋他${s.oth}`:''}</span><span title="メインの科目数">${s.subjN}科目</span></div><div class="bar"><i style="width:${pct}%"></i></div></th>`;
+      `<div class="load"><span><b>${s.cls}</b>／${esc(t.cap)}${s.oth?` ＋他${s.oth}`:''}</span><span title="メインの科目数（学科・学年・科目・単位が同じものを1つと数える）">${s.subjN}科目</span></div><div class="bar"><i style="width:${pct}%"></i></div></th>`;
     for(const c of cs){ const v=cellOf(p,t.id,c.id);
       rows+=`<td class="cell ${ri%2?'alt':''}" tabindex="0" data-t="${esc(t.id)}" data-c="${esc(c.id)}" aria-label="${esc(t.name)} ${esc(classLabel(c))} メイン${v.m} TT${v.t}">${v.m?`<span class="m">${v.m}</span>`:''}${v.t?`<span class="t">${v.m?'+':''}${v.t}</span>`:''}</td>`; }
     rows+='</tr>'; });
