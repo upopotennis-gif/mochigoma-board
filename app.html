@@ -211,7 +211,7 @@ function issuesOf(plan){
 }
 function totals(plan){
   let need=0,done=0,other=0,cap=0;
-  for(const c of plan.classes){ const s=classStat(plan,c); if(c.kind==='other') other+=s.total; else { need+=Math.max(+c.need||0,s.reqMain); done+=s.total; } }
+  for(const c of plan.classes){ const s=classStat(plan,c); if(c.kind==='other'){ if(!c.inCap) other+=s.total; } else { need+=Math.max(+c.need||0,s.reqMain); done+=s.total; } }
   for(const t of plan.teachers) cap+=(+t.cap||0);
   return {need,done,other,cap};
 }
